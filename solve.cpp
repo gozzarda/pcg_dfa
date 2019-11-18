@@ -164,10 +164,10 @@ struct DFA {
 
 DFA edge_to_dfa_parity(vertex_t u, vertex_t v, const set<vertex_t> &vs) {
 	DFA result;
-	state_t init = result.add_state();			for (vertex_t v : vs) result.add_transition(init, v, init);
-	state_t su = result.add_state();			for (vertex_t v : vs) result.add_transition(su, v, su);
-	state_t suv = result.add_state();			for (vertex_t v : vs) result.add_transition(suv, v, suv);
-	state_t suvu = result.add_state(true);		for (vertex_t v : vs) result.add_transition(suvu, v, suvu);
+	state_t init = result.add_state();			for (event_t e : vs) result.add_transition(init, e, init);
+	state_t su = result.add_state();			for (event_t e : vs) result.add_transition(su, e, su);
+	state_t suv = result.add_state();			for (event_t e : vs) result.add_transition(suv, e, suv);
+	state_t suvu = result.add_state(true);		for (event_t e : vs) result.add_transition(suvu, e, suvu);
 	result.add_transition(init, u, su);
 	result.add_transition(su, v, suv);
 	result.add_transition(suv, u, suvu);
@@ -176,10 +176,10 @@ DFA edge_to_dfa_parity(vertex_t u, vertex_t v, const set<vertex_t> &vs) {
 
 DFA exclude_edge_to_dfa_parity(vertex_t u, vertex_t v, const set<vertex_t> &vs) {
 	DFA result;
-	state_t init = result.add_state(true);		for (vertex_t v : vs) result.add_transition(init, v, init);
-	state_t su = result.add_state(true);		for (vertex_t v : vs) result.add_transition(su, v, su);
-	state_t suv = result.add_state(true);		for (vertex_t v : vs) result.add_transition(suv, v, suv);
-	state_t suvu = result.add_state(true);		for (vertex_t v : vs) result.add_transition(suvu, v, suvu);
+	state_t init = result.add_state(true);		for (event_t e : vs) result.add_transition(init, e, init);
+	state_t su = result.add_state(true);		for (event_t e : vs) result.add_transition(su, e, su);
+	state_t suv = result.add_state(true);		for (event_t e : vs) result.add_transition(suv, e, suv);
+	state_t suvu = result.add_state(true);		for (event_t e : vs) result.add_transition(suvu, e, suvu);
 	state_t suvuv = result.add_state();
 	result.add_transition(init, u, su);
 	result.add_transition(su, v, suv);
