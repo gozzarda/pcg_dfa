@@ -8,46 +8,14 @@ typedef pair<vertex_t, vertex_t> edge_t;
 typedef uint32_t state_t;
 typedef vertex_t event_t;
 
-struct WalkableDFA {
-	WalkableDFA() {}
-	virtual ~WalkableDFA() {};
-
-	virtual void reset() = 0;
-	virtual state_t current_state() const = 0;
-	virtual vector<event_t> event_options() const = 0;
-	virtual void push_event(event_t event) = 0;
-	virtual void pop() = 0;
-	virtual bool is_accepting() const = 0;
-
-	//private
-	bool dfs(vector<event_t> &solution, unordered_set<state_t> &visited) {
-		state_t curr  = current_state();
-		if (visited.count(curr)) return false;
-		visited.insert(curr);
-
-		if (is_accepting()) return true;
-
-		for (event_t event : event_options()) {
-			push_event(event);
-			solution.push_back(event);
-			if (dfs(solution, visited)) return true;
-			solution.pop_back();
-			pop();
-		}
-
-		return false;
-	}
-
-	optional<vector<event_t>> find_solution() {
-		vector<event_t> result;
-		unordered_set<state_t> visited;
-		return dfs(result, visited) ? optional<vector<event_t>>(result) : nullopt;
-	}
-};
+// struct pair_hash {
+// 	template <class T1, class T2>
+// 	size_t operator() (const pair<T1, T2> &p) const { return hash<T1>()(p.first) ^ hash<T2>()(p.second); }
+// };
 
 struct DFA {
 	vector<map<event_t, state_t>> transitions;
-	unordered_set<state_t> accepting;
+	set<state_t> accepting;
 
 	state_t add_state(bool accept = false) {
 		state_t result = transitions.size();
@@ -60,174 +28,153 @@ struct DFA {
 		transitions[from][event] = to;
 	}
 
-	//private
-	state_t dfs_walkable(WalkableDFA &walkable, unordered_map<state_t, state_t> &reindex) {
-		state_t curr = walkable.current_state();
-
-		if (reindex.count(curr)) return reindex[curr];
-		state_t from = add_state(walkable.is_accepting());
-		reindex.emplace(curr, from);
-
-		for (event_t event : walkable.event_options()) {
-			walkable.push_event(event);
-			add_transition(from, event, dfs_walkable(walkable, reindex));
-			walkable.pop();
-		}
-
-		return from;
-	}
-
-	DFA(WalkableDFA &walkable) {
-		walkable.reset();
-		unordered_map<state_t, state_t> reindex;
-		dfs_walkable(walkable, reindex);
-	}
-
-	DFA() {};
-
-	size_t num_states() {
+	size_t num_states() const {
 		return transitions.size();
 	}
 
-	size_t num_transitions() {
+	size_t num_transitions() const {
 		return accumulate(transitions.begin(), transitions.end(), 0, [](size_t lhs, auto rhs){ return lhs + rhs.size(); });
 	}
-};
 
-struct AtomicDFA : WalkableDFA {
-	DFA dfa;
-	stack<state_t> s;
-
-	void reset() {
-		s = stack<state_t>();
-		s.push(0);
-	}
-
-	AtomicDFA(DFA dfa) : dfa(dfa) { reset(); }
-
-	state_t current_state() const { return s.top(); }
-
-	vector<event_t> event_options() const {
-		vector<event_t> result;
-		const auto &m = dfa.transitions[current_state()];
-		result.reserve(m.size());
-		transform(m.begin(), m.end(), inserter(result, result.end()), [](auto p){ return p.first; });
+	set<event_t> alphabet() const {
+		set<event_t> result;
+		for (auto row : transitions) {
+			for (auto kv : row) {
+				result.insert(kv.first);
+			}
+		}
 		return result;
 	}
-
-	void push_event(event_t event) {
-		s.push(dfa.transitions[current_state()][event]);
-	}
-
-	void pop() {
-		if (s.size() > 1) s.pop();
-	}
-
-	bool is_accepting() const {
-		return dfa.accepting.count(current_state());
-	}
-};
-
-struct pair_hash {
-	template <class T1, class T2>
-	size_t operator() (const pair<T1, T2> &p) const { return hash<T1>()(p.first) ^ hash<T2>()(p.second); }
-};
-
-struct ConjunctionDFA : WalkableDFA {
-	WalkableDFA *lhs, *rhs;
-	stack<state_t> s;
-	unordered_map<pair<state_t, state_t>, state_t, pair_hash> compress;
 
 	//private
-	state_t add_state(state_t l, state_t r) {
-		auto p = make_pair(l, r);
+	bool dfs(vector<event_t>& sequence, vector<char>& visited, state_t curr) {
+		if (visited[curr]) return false;
+		visited[curr] = true;
 
-		if (!compress.count(p)) compress.emplace(p, compress.size());
+		if (accepting.count(curr)) return true;
 
-		return compress[p];
+		for (auto kv : transitions[curr]) {
+			event_t e = kv.first;
+			state_t next = kv.second;
+			sequence.push_back(e);
+			if (dfs(sequence, visited, next)) return true;
+			sequence.pop_back();
+		}
+
+		return false;
 	}
 
-	void reset() {
-		lhs->reset();
-		rhs->reset();
-		s = stack<state_t>();
-		compress.clear();
-		
-		state_t curr = add_state(lhs->current_state(), rhs->current_state());
-		s.push(curr);
+	pair<bool, vector<event_t>> find_solution() {
+		vector<event_t> sequence;
+		vector<char> visited(num_states(), false);
+		return make_pair(dfs(sequence, visited, 0), sequence);
 	}
 
-	ConjunctionDFA(WalkableDFA *lhs, WalkableDFA *rhs) : lhs(lhs), rhs(rhs) {
-		assert(lhs != nullptr);
-		assert(rhs != nullptr);
-		reset();
-	}
+	DFA operator&&(const DFA &rhs) const {
+		const DFA &lhs = *this;
+		DFA result;
 
-	~ConjunctionDFA() {
-		delete lhs;
-		delete rhs;
-	}
+		map<pair<state_t, state_t>, state_t> compress;
 
-	state_t current_state() const { return s.top(); }
+		stack<pair<state_t, state_t>> s;
+		s.push(make_pair(0, 0));
+		compress.emplace(s.top(), result.add_state(lhs.accepting.count(0) && rhs.accepting.count(0)));
 
-	vector<event_t> event_options() const {
-		auto lv = lhs->event_options();
-		auto rv = rhs->event_options();
-		vector<event_t> result;
-		result.reserve(min(lv.size(), rv.size()));
-		set_intersection(lv.begin(), lv.end(), rv.begin(), rv.end(), inserter(result, result.end()));
+		while (!s.empty()) {
+			auto curr = s.top(); s.pop();
+			state_t from = compress[curr];
+			state_t ls, rs;
+			tie(ls, rs) = curr;
+
+			for (auto kv : lhs.transitions[ls]) {
+				event_t e = kv.first;
+				if (!rhs.transitions[rs].count(e)) continue;
+				state_t ln = kv.second;
+				state_t rn = rhs.transitions.at(rs).at(e);
+				auto n = make_pair(ln, rn);
+
+				if (!compress.count(n)) {
+					bool accept = lhs.accepting.count(ln) && rhs.accepting.count(rn);
+					compress.emplace(n, result.add_state(accept));
+					s.push(n);
+				}
+
+				result.transitions[from][e] = compress[n];
+			}
+		}
+
 		return result;
 	}
 
-	void push_event(event_t event) {
-		lhs->push_event(event);
-		rhs->push_event(event);
-		state_t curr = add_state(lhs->current_state(), rhs->current_state());
-		s.push(curr);
-	}
+	// Reduces states that can't possibly reach an accepting state to a single deadend state
+	DFA simplify_halting() const {
+		vector<vector<state_t>> rev_list(num_states());
 
-	void pop() {
-		if (s.size() > 1) {
-			lhs->pop();
-			rhs->pop();
-			s.pop();
+		for (int u = 0; u < num_states(); ++u) {
+			for (auto kv : transitions[u]) {
+				state_t v = kv.second;
+				rev_list[v].push_back(u);
+			}
 		}
+
+		set<state_t> satisfiable = accepting;
+		stack<state_t> s;
+		for (state_t state : accepting) s.push(state);
+
+		while (!s.empty()) {
+			state_t curr = s.top(); s.pop();
+
+			for (state_t next : rev_list[curr]) {
+				if (satisfiable.count(next)) continue;
+				satisfiable.insert(next);
+				s.push(next);
+			}
+		}
+
+		DFA result;
+		map<state_t, state_t> reindex;
+
+		reindex.emplace(0, result.add_state(accepting.count(0)));
+		s.push(0);
+
+		while (!s.empty()) {
+			state_t curr = s.top(); s.pop();
+
+			for (auto kv : transitions[curr]) {
+				event_t e; state_t next;
+				tie(e, next) = kv;
+				if (!satisfiable.count(next)) continue;
+				if (!reindex.count(next)) {
+					reindex.emplace(next, result.add_state(accepting.count(next)));
+					s.push(next);
+				}
+				result.add_transition(reindex[curr], e, reindex[next]);
+			}
+		}
+
+		return result;
 	}
 
-	bool is_accepting() const {
-		return lhs->is_accepting() && rhs->is_accepting();
+	static DFA conjunction(vector<DFA>::iterator lwr, vector<DFA>::iterator upr) {
+		if (next(lwr) == upr) return *lwr;
+		auto mid = lwr + distance(lwr, upr) / 2;
+		return (conjunction(lwr, mid) && conjunction(mid, upr)).simplify_halting();
 	}
 };
 
-WalkableDFA *dfa_conjunction(vector<WalkableDFA*> &dfas, int lwr = 0, int upr = -1) {
-	if (upr == -1) upr = dfas.size();
-	if (upr - lwr < 2) return dfas[lwr];
-	int mid = (lwr + upr) / 2;
-	return new ConjunctionDFA(dfa_conjunction(dfas, lwr, mid), dfa_conjunction(dfas, mid, upr));
-}
-
-DFA edge_to_dfa_parity(vertex_t u, vertex_t v, const vector<vertex_t> &vs) {
+DFA edge_to_dfa_parity(vertex_t u, vertex_t v, const set<vertex_t> &vs) {
 	DFA result;
-	state_t init = result.add_state();		for (vertex_t v : vs) result.add_transition(init, v, init);
-	state_t su = result.add_state();		for (vertex_t v : vs) result.add_transition(su, v, su);
-	state_t suv = result.add_state();		for (vertex_t v : vs) result.add_transition(suv, v, suv);
-	state_t suvu = result.add_state(true);	for (vertex_t v : vs) result.add_transition(suvu, v, suvu);
+	state_t init = result.add_state();			for (vertex_t v : vs) result.add_transition(init, v, init);
+	state_t su = result.add_state();			for (vertex_t v : vs) result.add_transition(su, v, su);
+	state_t suv = result.add_state();			for (vertex_t v : vs) result.add_transition(suv, v, suv);
+	state_t suvu = result.add_state(true);		for (vertex_t v : vs) result.add_transition(suvu, v, suvu);
 	result.add_transition(init, u, su);
 	result.add_transition(su, v, suv);
 	result.add_transition(suv, u, suvu);
 	return result;
 }
 
-DFA edge_to_dfa(vertex_t u, vertex_t v, const vector<vertex_t> &vs) {
-	DFA lhs = edge_to_dfa_parity(u, v, vs);
-	DFA rhs = edge_to_dfa_parity(v, u, vs);
-	WalkableDFA *walkable = new ConjunctionDFA(new AtomicDFA(lhs), new AtomicDFA(rhs));
-	DFA result(*walkable);
-	delete walkable;
-	return result;
-}
-
-DFA exclude_edge_to_dfa_parity(vertex_t u, vertex_t v, const vector<vertex_t> &vs) {
+DFA exclude_edge_to_dfa_parity(vertex_t u, vertex_t v, const set<vertex_t> &vs) {
 	DFA result;
 	state_t init = result.add_state(true);		for (vertex_t v : vs) result.add_transition(init, v, init);
 	state_t su = result.add_state(true);		for (vertex_t v : vs) result.add_transition(su, v, su);
@@ -241,47 +188,45 @@ DFA exclude_edge_to_dfa_parity(vertex_t u, vertex_t v, const vector<vertex_t> &v
 	return result;
 }
 
-DFA exclude_edge_to_dfa(vertex_t u, vertex_t v, const vector<vertex_t> &vs) {
-	DFA lhs = exclude_edge_to_dfa_parity(u, v, vs);
-	DFA rhs = exclude_edge_to_dfa_parity(v, u, vs);
-	WalkableDFA *walkable = new ConjunctionDFA(new AtomicDFA(lhs), new AtomicDFA(rhs));
-	DFA result(*walkable);
-	delete walkable;
-	return result;
-}
-
-WalkableDFA *graph_to_dfa(vector<vertex_t> vs, vector<edge_t> es) {
-	sort(es.begin(), es.end());
-	vector<edge_t> vs_squared;
-	for (auto u : vs) for (auto v : vs) vs_squared.push_back(make_pair(u, v));
+DFA graph_to_dfa(set<vertex_t> vs, set<edge_t> es) {
+	for (auto e : es) es.insert(make_pair(e.second, e.first));
+	set<edge_t> vs_squared;
+	for (auto u : vs) for (auto v : vs) if (u != v) vs_squared.insert(make_pair(u, v));
 	vector<edge_t> es_prime;
 	set_difference(vs_squared.begin(), vs_squared.end(), es.begin(), es.end(), inserter(es_prime, es_prime.end()));
 
-	vector<WalkableDFA*> dfas;
+	vector<DFA> dfas;
 	transform(es.begin(), es.end(), inserter(dfas, dfas.end()),
 		[&](auto e){
-			return new AtomicDFA(edge_to_dfa(e.first, e.second, vs));
+			return edge_to_dfa_parity(e.first, e.second, vs);
 		}
 		);
 	transform(es_prime.begin(), es_prime.end(), inserter(dfas, dfas.end()),
 		[&](auto e){
-			return new AtomicDFA(exclude_edge_to_dfa(e.first, e.second, vs));
+			return exclude_edge_to_dfa_parity(e.first, e.second, vs);
 		}
 		);
-	// random_shuffle(dfas.begin(), dfas.end());
-	return dfa_conjunction(dfas);
+	random_shuffle(dfas.begin(), dfas.end());	// Avoid expensive structures
+	// for (auto lwr = dfas.begin(), upr = prev(dfas.end()); lwr < upr; lwr += 2, upr -= 2) {
+	// 	swap(*lwr, *upr);
+	// }
+	return DFA::conjunction(dfas.begin(), dfas.end());
 }
 
-pair<size_t, size_t> dfa_stats(vector<vertex_t> vs, vector<edge_t> es) {
-	WalkableDFA *walkable = graph_to_dfa(vs, es);
-	DFA dfa(*walkable);
-	delete walkable;
-	return make_pair(dfa.num_states(), dfa.num_transitions());
+set<edge_t> random_edge_set(set<vertex_t> vs, double density = 0.5) {
+	vector<edge_t> vs_squared;
+	for (auto u : vs) for (auto v : vs) if (u < v) vs_squared.push_back(make_pair(u, v));
+	random_shuffle(vs_squared.begin(), vs_squared.end());
+	auto it = vs_squared.begin();
+	int num_edges = round(vs_squared.size() * density);
+	set<edge_t> result;
+	for (int i = 0; i < num_edges; ++i) result.insert(*it++);
+	return result;
 }
 
 void run() {
-	vector<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
-	vector<edge_t> es = {
+	set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
+	set<edge_t> es = {
 		{ 'A', 'B' },
 		{ 'A', 'C' },
 		{ 'A', 'D' },
@@ -293,8 +238,8 @@ void run() {
 		{ 'E', 'F' },
 	};
 
-	// vector<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E' };
-	// vector<edge_t> es = {
+	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E' };
+	// set<edge_t> es = {
 	// 	{ 'A', 'B' },
 	// 	{ 'A', 'C' },
 	// 	{ 'A', 'D' },
@@ -303,11 +248,22 @@ void run() {
 	// 	{ 'D', 'E' },
 	// };
 
-	size_t num_states, num_transitions;
-	tie(num_states, num_transitions) = dfa_stats(vs, es);
+	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
+	// set<edge_t> es = random_edge_set(vs);
 
-	cout << "num_states = " << num_states << endl;
-	cout << "num_transitions = " << num_transitions << endl;
+	DFA dfa = graph_to_dfa(vs, es);
+
+	cout << "num_states = " << dfa.num_states() << endl;
+	cout << "num_transitions = " << dfa.num_transitions() << endl;
+
+	auto p = dfa.find_solution();
+	if (p.first) {
+		cout << "Found solution: ";
+		for (event_t e : p.second) cout << e;
+		cout << endl;
+	} else {
+		cout << "No solution found" << endl;
+	}
 }
 
 int main() {
