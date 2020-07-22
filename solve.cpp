@@ -2,26 +2,40 @@
 
 using namespace std;
 
-typedef uint8_t vertex_t;
+typedef char vertex_t;
 typedef pair<vertex_t, vertex_t> edge_t;
 
-typedef uint32_t state_t;
+typedef size_t state_t;
 typedef vertex_t event_t;
 
-// struct pair_hash {
-// 	template <class T1, class T2>
-// 	size_t operator() (const pair<T1, T2> &p) const { return hash<T1>()(p.first) ^ hash<T2>()(p.second); }
-// };
+typedef vector<uint8_t> vecbool;
 
+// Explicit transition table representation of DFA
+// Assumes pseudocyclic
+// Assumes states are toposorted with initial state at end
+// Defaults to explicit self-cycles
 struct DFA {
-	vector<map<event_t, state_t>> transitions;
-	set<state_t> accepting;
+	vector<event_t> alphabet;
+	vector<vector<state_t>> transitions;
+	vecbool accepting;
 
-	state_t add_state(bool accept = false) {
-		state_t result = transitions.size();
-		transitions.emplace_back();
-		if (accept) accepting.insert(result);
-		return result;
+	DFA(vector<vertex_t> ab,
+		vector<vector<state_t>> table,
+		vecbool acc) :
+		alphabet(ab),
+		transitions(table),
+		accepting(acc)
+	{}
+
+	DFA(vector<vertex_t> ab, size_t states) : alphabet(ab), accepting(states) {
+		transitions = vector<vector<state_t>>(states);
+		for (state_t state = 0; state < transitions.size(); ++state) {
+			transitions[state] = vector<state_t>(ab.size(), state);
+		}
+	}
+
+	void set_accepting(state_t state, bool acc = true) {
+		accepting[state] = acc;
 	}
 
 	void add_transition(state_t from, event_t event, state_t to) {
@@ -32,31 +46,23 @@ struct DFA {
 		return transitions.size();
 	}
 
-	size_t num_transitions() const {
-		return accumulate(transitions.begin(), transitions.end(), 0, [](size_t lhs, auto rhs){ return lhs + rhs.size(); });
-	}
-
-	set<event_t> alphabet() const {
-		set<event_t> result;
-		for (auto row : transitions) {
-			for (auto kv : row) {
-				result.insert(kv.first);
-			}
-		}
-		return result;
+	// Helper for making sure handmade DFAs obey rules
+	// Returns false if unfixable
+	bool sort() {
+		// TODO: toposort, fail early if non-trivial cycle detected
 	}
 
 	//private
-	bool dfs(vector<event_t>& sequence, vector<char>& visited, state_t curr) {
+	bool dfs(vector<event_t>& sequence, vecbool& visited, state_t curr) {
 		if (visited[curr]) return false;
 		visited[curr] = true;
 
-		if (accepting.count(curr)) return true;
+		if (accepting[curr]) return true;
 
-		for (auto kv : transitions[curr]) {
-			event_t e = kv.first;
-			state_t next = kv.second;
-			sequence.push_back(e);
+		vector<state_t>& row = transitions[curr];
+		for (size_t i = 0; i < alphabet.size(); ++i) {
+			state_t next = row[i];
+			sequence.push_back(alphabet[i]);
 			if (dfs(sequence, visited, next)) return true;
 			sequence.pop_back();
 		}
@@ -65,11 +71,16 @@ struct DFA {
 	}
 
 	pair<bool, vector<event_t>> find_solution() {
+		size_t states = num_states();
 		vector<event_t> sequence;
-		vector<char> visited(num_states(), false);
-		return make_pair(dfs(sequence, visited, 0), sequence);
+		vecbool visited(states, false);
+		return make_pair(dfs(sequence, visited, states-1), sequence);
 	}
 
+	// TODO: continue rework from here
+	// Parallel DFS from last state
+	// Add states as required to maintain toposort
+	// Simplify states by equivalence as we go
 	DFA operator&&(const DFA &rhs) const {
 		const DFA &lhs = *this;
 		DFA result;
