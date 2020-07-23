@@ -14,6 +14,7 @@ typedef vector<uint8_t> vecbool;
 // Assumes pseudocyclic
 // Assumes states are toposorted with initial state at end
 // Defaults to explicit self-cycles
+// Assumes alphabet is in sorted order
 struct DFA {
 	vector<event_t> alphabet;
 	vector<vector<state_t>> transitions;
@@ -46,10 +47,21 @@ struct DFA {
 		return transitions.size();
 	}
 
-	// Helper for making sure handmade DFAs obey rules
-	// Returns false if unfixable
-	bool sort() {
-		// TODO: toposort, fail early if non-trivial cycle detected
+	size_t init_state() const {
+		return num_states() - 1;
+	}
+
+	// Used to sanity check human-made inputs
+	bool validate() const {
+		if (transitions.size() != accepting.size()) return false;
+		if (!is_sorted(alphabet.begin(), alphabet.end())) return false;
+		if (adjacent_find(alphabet.begin(), alphabet.end()) != alphabet.end()) return false
+		for (int parent = 0; parent < transitions.size(); ++parent) {
+			if (transitions[parent].size() != alphabet.size()) return false;
+			for (auto child : transitions[parent]) {
+				if (child > parent) return false;
+			}
+		}
 	}
 
 	//private
@@ -81,6 +93,86 @@ struct DFA {
 	// Parallel DFS from last state
 	// Add states as required to maintain toposort
 	// Simplify states by equivalence as we go
+	DFA operator&&(const DFA &rhs) const {
+		const DFA &lhs = *this;
+
+		// Compute alphabet for new automaton
+		vector<event_t> alphabet;
+		set_union(lhs.alphabet.begin(), lhs.alphabet.end(), rhs.alphabet.begin(), rhs.alphabet.end(), back_inserter(alphabet));
+
+		// Compute mappings between old and new event ids
+		const not_found = numeric_limits<size_t>::max();
+		vector<size_t> from_lhs_ev(lhs.alphabet.size()), to_lhs_ev(alphabet.size(), not_found);
+		vector<size_t> from_rhs_ev(rhs.alphabet.size()), to_rhs_ev(alphabet.size(), not_found);
+		for (size_t ai = 0, li = 0, ri = 0; ai < alphabet.size(); ++ai) {
+			if (lhs.alphabet[li] == alphabet[ai]) {
+				from_lhs_ev[li] = ai;
+				to_lhs_ev[ai] = li++;
+			}
+			if (rhs.alphabet[ri] == alphabet[ai]) {
+				from_rhs_ev[ri] = ai;
+				to_rhs_ev[ai] = ri++;
+			}
+		}
+
+		vector<vector<state_t>> transitions;
+		vecbool accepting;
+		unordered_map<pair<state_t, state_t>, state_t> compress;
+
+		unordered_set<pair<state_t, state_t>> visited;
+
+		stack<pair<state_t, state_t>> s;
+		s.push(make_pair(lhs.init_state(), rhs.init_state()));
+
+		while (!s.empty()) {
+			auto curr = s.top();
+			state_t ls, rs;
+			tie(ls, rs) = curr;
+
+			if (!visited.count(curr)) {
+				visited.insert(curr);
+
+				// Add all unvisited children to the stack
+				for (size_t ai = 0; ai < alphabet.size(); ++ai) {
+					size_t li = to_lhs_ev[ai], ri = to_rhs_ev[ai];
+					state_t ln = li == not_found ? ls : lhs.transitions[ls][li];
+					state_t rn = ri == not_found ? rs : rhs.transitions[rs][ri];
+					auto next = make_pair(ln, rn);
+					if (visited.count(next)) continue;
+					s.push(next);
+				}
+			} else {
+				s.pop();
+
+				// TODO: continue from here
+				// Check if equivalent state already exists
+				// Note may be equivalent to highest child
+				// Can't be equivalent to lower children without breaking toposort, which we know isn't the case
+				for (size_t ai = 0; ai < alphabet.size(); ++ai) {
+
+				}
+			}
+
+			for (auto kv : lhs.transitions[ls]) {
+				event_t e = kv.first;
+				if (!rhs.transitions[rs].count(e)) continue;
+				state_t ln = kv.second;
+				state_t rn = rhs.transitions.at(rs).at(e);
+				auto n = make_pair(ln, rn);
+
+				if (!compress.count(n)) {
+					bool accept = lhs.accepting.count(ln) && rhs.accepting.count(rn);
+					compress.emplace(n, result.add_state(accept));
+					s.push(n);
+				}
+
+				result.transitions[from][e] = compress[n];
+			}
+		}
+
+		return result;
+	}
+
 	DFA operator&&(const DFA &rhs) const {
 		const DFA &lhs = *this;
 		DFA result;
