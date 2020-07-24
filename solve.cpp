@@ -13,9 +13,11 @@ typedef vector<uint8_t> vecbool;
 // Explicit transition table representation of DFA
 // Assumes pseudocyclic
 // Assumes states are toposorted with initial state at end
-// Defaults to explicit self-cycles
+// Uses max val to represent self-loops
 // Assumes alphabet is in sorted order
 struct DFA {
+	const state_t self_loop = numeric_limits<state_t>::max();
+
 	vector<event_t> alphabet;
 	vector<vector<state_t>> transitions;
 	vecbool accepting;
@@ -28,12 +30,11 @@ struct DFA {
 		accepting(acc)
 	{}
 
-	DFA(vector<vertex_t> ab, size_t states) : alphabet(ab), accepting(states) {
-		transitions = vector<vector<state_t>>(states);
-		for (state_t state = 0; state < transitions.size(); ++state) {
-			transitions[state] = vector<state_t>(ab.size(), state);
-		}
-	}
+	DFA(vector<vertex_t> ab, size_t states) :
+		alphabet(ab),
+		accepting(states),
+		transitions(states, vector<state_t>(ab.size(), self_loop))
+	{}
 
 	void set_accepting(state_t state, bool acc = true) {
 		accepting[state] = acc;
@@ -59,7 +60,7 @@ struct DFA {
 		for (int parent = 0; parent < transitions.size(); ++parent) {
 			if (transitions[parent].size() != alphabet.size()) return false;
 			for (auto child : transitions[parent]) {
-				if (child > parent) return false;
+				if (child > parent && child != self_loop) return false;
 			}
 		}
 	}
@@ -73,7 +74,7 @@ struct DFA {
 
 		vector<state_t>& row = transitions[curr];
 		for (size_t i = 0; i < alphabet.size(); ++i) {
-			state_t next = row[i];
+			state_t next = row[i] == self_loop ? curr : row[i];	// Could be min(curr, row[i])?
 			sequence.push_back(alphabet[i]);
 			if (dfs(sequence, visited, next)) return true;
 			sequence.pop_back();
@@ -101,9 +102,8 @@ struct DFA {
 		set_union(lhs.alphabet.begin(), lhs.alphabet.end(), rhs.alphabet.begin(), rhs.alphabet.end(), back_inserter(alphabet));
 
 		// Compute mappings between old and new event ids
-		const not_found = numeric_limits<size_t>::max();
-		vector<size_t> from_lhs_ev(lhs.alphabet.size()), to_lhs_ev(alphabet.size(), not_found);
-		vector<size_t> from_rhs_ev(rhs.alphabet.size()), to_rhs_ev(alphabet.size(), not_found);
+		vector<size_t> from_lhs_ev(lhs.alphabet.size()), to_lhs_ev(alphabet.size(), self_loop);
+		vector<size_t> from_rhs_ev(rhs.alphabet.size()), to_rhs_ev(alphabet.size(), self_loop);
 		for (size_t ai = 0, li = 0, ri = 0; ai < alphabet.size(); ++ai) {
 			if (lhs.alphabet[li] == alphabet[ai]) {
 				from_lhs_ev[li] = ai;
@@ -117,12 +117,15 @@ struct DFA {
 
 		vector<vector<state_t>> transitions;
 		vecbool accepting;
+
+		unordered_map<pair<vector<state_t>, bool>, state_t> behaviour_ids;
 		unordered_map<pair<state_t, state_t>, state_t> compress;
 
-		unordered_set<pair<state_t, state_t>> visited;
+		unordered_set<pair<state_t, state_t>> seen, visited;
 
 		stack<pair<state_t, state_t>> s;
 		s.push(make_pair(lhs.init_state(), rhs.init_state()));
+		seen.insert(s.top());
 
 		while (!s.empty()) {
 			auto curr = s.top();
@@ -132,43 +135,55 @@ struct DFA {
 			if (!visited.count(curr)) {
 				visited.insert(curr);
 
-				// Add all unvisited children to the stack
+				// Add all unseen children to the stack
 				for (size_t ai = 0; ai < alphabet.size(); ++ai) {
-					size_t li = to_lhs_ev[ai], ri = to_rhs_ev[ai];
-					state_t ln = li == not_found ? ls : lhs.transitions[ls][li];
-					state_t rn = ri == not_found ? rs : rhs.transitions[rs][ri];
-					auto next = make_pair(ln, rn);
-					if (visited.count(next)) continue;
-					s.push(next);
+					state_t lc = lhs.transitions[ls][to_lhs_ev[ai]];
+					state_t rc = rhs.transitions[rs][to_rhs_ev[ai]];
+					auto child = make_pair(lc, rc);
+					if (seen.count(child)) continue;
+					seen.insert(child);
+					s.push(child);
 				}
 			} else {
 				s.pop();
 
-				// TODO: continue from here
 				// Check if equivalent state already exists
 				// Note may be equivalent to highest child
 				// Can't be equivalent to lower children without breaking toposort, which we know isn't the case
+				bool acc = lhs.accepting[ls] && rhs.accepting[rs];
+				vector<state_t> row(alphabet.size(), self_loop);
+				state_t highest_child = 0;
 				for (size_t ai = 0; ai < alphabet.size(); ++ai) {
-
-				}
-			}
-
-			for (auto kv : lhs.transitions[ls]) {
-				event_t e = kv.first;
-				if (!rhs.transitions[rs].count(e)) continue;
-				state_t ln = kv.second;
-				state_t rn = rhs.transitions.at(rs).at(e);
-				auto n = make_pair(ln, rn);
-
-				if (!compress.count(n)) {
-					bool accept = lhs.accepting.count(ln) && rhs.accepting.count(rn);
-					compress.emplace(n, result.add_state(accept));
-					s.push(n);
+					state_t lc = lhs.transitions[ls][to_lhs_ev[ai]];
+					state_t rc = rhs.transitions[rs][to_rhs_ev[ai]];
+					auto child = make_pair(lc, rc);
+					if (child != curr) {
+						row[ai] = compress[child];
+						highest_child = max(highest_child, row[ai]);
+					}
 				}
 
-				result.transitions[from][e] = compress[n];
+				auto behaviour = make_pair(row, acc);
+				if (behaviour_ids.count(behaviour)) {	// If we have seen this behaviour before we are obviously equivalent
+					compress.emplace(curr, behaviour_ids[behaviour]);
+				} else {
+					auto candidate = row;	// Compute behaviour if we are equivalent to our highest child
+					replace(candidate.begin(), candidate.end(), highest_child, self_loop);
+					if (acc == accepting[highest_child] && candidate == transitions[highest_child]) {
+						compress.emplace(curr, highest_child);	// If we are equivalent to highest child just use that
+					} else {	// Otherwise, this is a new unique state, add it on top
+						state_t id = transitions.size();
+						transitions.push_back(row);
+						accepting.push_back(acc);
+						behaviour_ids.emplace(behaviour, id);
+						compress.emplace(curr, id);
+					}
+				}
 			}
 		}
+
+		// TODO: continue from here
+		// Need to build DFA from transitions, etc.
 
 		return result;
 	}
