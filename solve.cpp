@@ -45,9 +45,13 @@ struct DFA {
 	}
 
 	void add_transition(state_t from, event_t event, state_t to) {
+		assert(0 <= from && from < transitions.size());
+		assert(0 <= to && to < transitions.size() || to == self_loop);
+		assert(to != from);
 		auto bounds = equal_range(alphabet.begin(), alphabet.end(), event);
 		assert(bounds.first != bounds.second);
-		size_t event_id = *bounds.first;
+		size_t event_id = bounds.first - alphabet.begin();
+		assert(event_id < transitions[from].size());
 		transitions[from][event_id] = to;
 	}
 
@@ -55,8 +59,12 @@ struct DFA {
 		return transitions.size() - 1;
 	}
 
+	size_t transition(state_t curr, size_t event_id) const {
+		return (event_id < alphabet.size()) ? transitions[curr][event_id] : self_loop;
+	}
+
 	// Used to sanity check human-made inputs
-	bool assert_valid() const {
+	void assert_valid() const {
 		assert(transitions.size() == accepting.size());
 		assert(is_sorted(alphabet.begin(), alphabet.end()));
 		assert(adjacent_find(alphabet.begin(), alphabet.end()) == alphabet.end());
@@ -100,9 +108,6 @@ struct DFA {
 	DFA operator&&(const DFA &rhs) const {
 		const DFA &lhs = *this;
 
-		cerr << "lhs: " << lhs.alphabet.size() << ", " << lhs.transitions.size() << ", " << lhs.accepting.size() << endl;
-		cerr << "rhs: " << rhs.alphabet.size() << ", " << rhs.transitions.size() << ", " << rhs.accepting.size() << endl;
-
 		// Compute alphabet for new automaton
 		vector<event_t> alphabet;
 		set_union(lhs.alphabet.begin(), lhs.alphabet.end(), rhs.alphabet.begin(), rhs.alphabet.end(), back_inserter(alphabet));
@@ -127,38 +132,36 @@ struct DFA {
 		map<pair<vector<state_t>, bool>, state_t> behaviour_ids;
 		map<pair<state_t, state_t>, state_t> compress;
 
-		set<pair<state_t, state_t>> seen;
+		set<pair<state_t, state_t>> seen, done;
 
 		stack<pair<state_t, state_t>> state_stack;
-		stack<bool> visited_stack;
 		state_stack.push(make_pair(lhs.init_state(), rhs.init_state()));
-		visited_stack.push(false);
-		seen.insert(state_stack.top());
 
 		while (!state_stack.empty()) {
 			auto curr = state_stack.top(); state_stack.pop();
-			bool visited = visited_stack.top(); visited_stack.pop();
 			state_t ls, rs;
 			tie(ls, rs) = curr;
 
-			if (!visited) {
+
+			if (!seen.count(curr)) {
+				seen.insert(curr);
+
 				state_stack.push(curr);
-				visited_stack.push(true);
 
 				// Add all unseen children to the stack
 				for (size_t ai = 0; ai < alphabet.size(); ++ai) {
-					size_t li = to_lhs_ev[ai], ri = to_rhs_ev[ai];
-					state_t lc = li == self_loop ? self_loop : lhs.transitions[ls][li];
-					state_t rc = ri == self_loop ? self_loop : rhs.transitions[rs][ri];
+					state_t lc = lhs.transition(ls, to_lhs_ev[ai]);
+					state_t rc = rhs.transition(rs, to_rhs_ev[ai]);
 					if (lc == self_loop) lc = ls;
 					if (rc == self_loop) rc = rs;
 					auto child = make_pair(lc, rc);
-					if (seen.count(child)) continue;
-					seen.insert(child);
+					if (child == curr) continue;
+					if (done.count(child)) continue;
 					state_stack.push(child);
-					visited_stack.push(false);
 				}
-			} else {
+			} else if (!done.count(curr)) {
+				done.insert(curr);
+
 				// Check if equivalent state already exists
 				// Note may be equivalent to highest child
 				// Can't be equivalent to lower children without breaking toposort, which we know isn't the case
@@ -166,9 +169,8 @@ struct DFA {
 				vector<state_t> row(alphabet.size(), self_loop);
 				state_t highest_child = self_loop;
 				for (size_t ai = 0; ai < alphabet.size(); ++ai) {
-					size_t li = to_lhs_ev[ai], ri = to_rhs_ev[ai];
-					state_t lc = li == self_loop ? self_loop : lhs.transitions[ls][li];
-					state_t rc = ri == self_loop ? self_loop : rhs.transitions[rs][ri];
+					state_t lc = lhs.transition(ls, to_lhs_ev[ai]);
+					state_t rc = rhs.transition(rs, to_rhs_ev[ai]);
 					if (lc == self_loop) lc = ls;
 					if (rc == self_loop) rc = rs;
 					auto child = make_pair(lc, rc);
@@ -197,15 +199,10 @@ struct DFA {
 			}
 		}
 
-		cerr << "result: " << alphabet.size() << ", " << transitions.size() << ", " << accepting.size() << endl;
-		DFA result(alphabet, transitions, accepting);
-		result.assert_valid();
-		cerr << "WAT" << endl;
-
-		return result;
+		return DFA(alphabet, transitions, accepting);
 	}
 
-	static DFA conjunction(vector<DFA>::iterator lwr, vector<DFA>::iterator upr) {
+	static DFA conjunction(vector<DFA>::const_iterator lwr, vector<DFA>::const_iterator upr) {
 		if (next(lwr) == upr) return *lwr;
 		auto mid = lwr + distance(lwr, upr) / 2;
 		return conjunction(lwr, mid) && conjunction(mid, upr);
@@ -250,7 +247,7 @@ DFA graph_to_dfa(set<vertex_t> vs, set<edge_t> es) {
 	vector<DFA> dfas;
 	transform(es.rbegin(), es.rend(), back_inserter(dfas), edge_to_dfa_parity);
 	transform(es_prime.begin(), es_prime.end(), back_inserter(dfas), exclude_edge_to_dfa_parity);
-	// random_shuffle(dfas.begin(), dfas.end());	// Avoid expensive structures
+	random_shuffle(dfas.begin(), dfas.end());	// Avoid expensive structures
 	return DFA::conjunction(dfas.begin(), dfas.end());
 }
 
