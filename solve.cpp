@@ -10,10 +10,27 @@ typedef vertex_t event_t;
 
 typedef vector<uint8_t> vecbool;
 
-// struct pair_hash {
-// 	template <class T1, class T2>
-// 	size_t operator() (const pair<T1, T2> &p) const { return (hash<T1>()(p.first) << 1) ^ hash<T2>()(p.second); }
-// };
+template <typename T>
+inline void hash_combine(size_t& h, T const& v) { h ^= hash<T>()(v) + 0x9e3779b9 + (h << 6) + (h >> 2); }
+
+template<typename T, typename U>
+struct hash<pair<T, U>> {
+	size_t operator() (pair<T, U> const& v) const {
+		size_t result = 0;
+		hash_combine(result, v.first);
+		hash_combine(result, v.second);
+		return result;
+	}
+};
+
+template<typename T>
+struct hash<vector<T>> {
+	size_t operator() (vector<T> const& v) const {
+		size_t result = 0;
+		for (auto& item : v) hash_combine(result, item);
+		return result;
+	}
+};
 
 // Explicit transition table representation of DFA
 // Assumes pseudocyclic
@@ -25,6 +42,8 @@ struct DFA {
 	vector<event_t> alphabet;
 	vector<vector<state_t>> transitions;
 	vecbool accepting;
+
+	DFA(bool acc = false) : transitions(1), accepting(1, acc) {}
 
 	DFA(vector<vertex_t> ab,
 		vector<vector<state_t>> table,
@@ -55,11 +74,11 @@ struct DFA {
 		transitions[from][event_id] = to;
 	}
 
-	size_t init_state() const {
+	state_t init_state() const {
 		return transitions.size() - 1;
 	}
 
-	size_t transition(state_t curr, size_t event_id) const {
+	state_t transition(state_t curr, size_t event_id) const {
 		return (event_id < alphabet.size()) ? transitions[curr][event_id] : self_loop;
 	}
 
@@ -116,11 +135,11 @@ struct DFA {
 		vector<size_t> from_lhs_ev(lhs.alphabet.size()), to_lhs_ev(alphabet.size(), self_loop);
 		vector<size_t> from_rhs_ev(rhs.alphabet.size()), to_rhs_ev(alphabet.size(), self_loop);
 		for (size_t ai = 0, li = 0, ri = 0; ai < alphabet.size(); ++ai) {
-			if (lhs.alphabet[li] == alphabet[ai]) {
+			if (li < lhs.alphabet.size() && lhs.alphabet[li] == alphabet[ai]) {
 				from_lhs_ev[li] = ai;
 				to_lhs_ev[ai] = li++;
 			}
-			if (rhs.alphabet[ri] == alphabet[ai]) {
+			if (ri < rhs.alphabet.size() && rhs.alphabet[ri] == alphabet[ai]) {
 				from_rhs_ev[ri] = ai;
 				to_rhs_ev[ai] = ri++;
 			}
@@ -129,10 +148,9 @@ struct DFA {
 		vector<vector<state_t>> transitions;
 		vecbool accepting;
 
-		map<pair<vector<state_t>, bool>, state_t> behaviour_ids;
-		map<pair<state_t, state_t>, state_t> compress;
-
-		set<pair<state_t, state_t>> seen, done;
+		unordered_map<pair<vector<state_t>, bool>, state_t> behaviour_ids;
+		unordered_map<pair<state_t, state_t>, state_t> compress;
+		unordered_set<pair<state_t, state_t>> seen;
 
 		stack<pair<state_t, state_t>> state_stack;
 		state_stack.push(make_pair(lhs.init_state(), rhs.init_state()));
@@ -141,7 +159,6 @@ struct DFA {
 			auto curr = state_stack.top(); state_stack.pop();
 			state_t ls, rs;
 			tie(ls, rs) = curr;
-
 
 			if (!seen.count(curr)) {
 				seen.insert(curr);
@@ -156,16 +173,13 @@ struct DFA {
 					if (rc == self_loop) rc = rs;
 					auto child = make_pair(lc, rc);
 					if (child == curr) continue;
-					if (done.count(child)) continue;
+					if (compress.count(child)) continue;
 					state_stack.push(child);
 				}
-			} else if (!done.count(curr)) {
-				done.insert(curr);
-
+			} else if (!compress.count(curr)) {
 				// Check if equivalent state already exists
 				// Note may be equivalent to highest child
 				// Can't be equivalent to lower children without breaking toposort, which we know isn't the case
-				bool acc = lhs.accepting[ls] && rhs.accepting[rs];
 				vector<state_t> row(alphabet.size(), self_loop);
 				state_t highest_child = self_loop;
 				for (size_t ai = 0; ai < alphabet.size(); ++ai) {
@@ -180,6 +194,7 @@ struct DFA {
 					}
 				}
 
+				bool acc = lhs.accepting[ls] && rhs.accepting[rs];
 				auto behaviour = make_pair(row, acc);
 				if (behaviour_ids.count(behaviour)) {	// If we have seen this behaviour before we are obviously equivalent
 					compress.emplace(curr, behaviour_ids[behaviour]);
@@ -199,17 +214,13 @@ struct DFA {
 			}
 		}
 
-		return DFA(alphabet, transitions, accepting);
-	}
+		cerr << alphabet.size() << ", " << transitions.size() << endl;
 
-	static DFA conjunction(vector<DFA>::const_iterator lwr, vector<DFA>::const_iterator upr) {
-		if (next(lwr) == upr) return *lwr;
-		auto mid = lwr + distance(lwr, upr) / 2;
-		return conjunction(lwr, mid) && conjunction(mid, upr);
+		return DFA(alphabet, transitions, accepting);
 	}
 };
 
-DFA edge_to_dfa_parity(edge_t edge) {
+DFA half_edge_dfa(edge_t edge) {
 	vertex_t u, v;
 	tie(u, v) = edge;
 	vector<vertex_t> alphabet({u, v});
@@ -223,7 +234,7 @@ DFA edge_to_dfa_parity(edge_t edge) {
 	return result;
 }
 
-DFA exclude_edge_to_dfa_parity(edge_t edge) {
+DFA no_half_edge_dfa(edge_t edge) {
 	vertex_t u, v;
 	tie(u, v) = edge;
 	vector<vertex_t> alphabet({u, v});
@@ -238,22 +249,27 @@ DFA exclude_edge_to_dfa_parity(edge_t edge) {
 }
 
 DFA graph_to_dfa(set<vertex_t> vs, set<edge_t> es) {
-	for (auto e : es) es.insert(make_pair(e.second, e.first));
-	set<edge_t> vs_squared;
-	for (auto u : vs) for (auto v : vs) if (u != v) vs_squared.insert(make_pair(u, v));
-	vector<edge_t> es_prime;
-	set_difference(vs_squared.begin(), vs_squared.end(), es.begin(), es.end(), back_inserter(es_prime));
-
-	vector<DFA> dfas;
-	transform(es.rbegin(), es.rend(), back_inserter(dfas), edge_to_dfa_parity);
-	transform(es_prime.begin(), es_prime.end(), back_inserter(dfas), exclude_edge_to_dfa_parity);
-	random_shuffle(dfas.begin(), dfas.end());	// Avoid expensive structures
-	return DFA::conjunction(dfas.begin(), dfas.end());
+	for (auto e : es) es.emplace(e.second, e.first);	// Split edges into half-edges
+	DFA result(true);
+	for (auto u : vs) {
+		DFA row_dfa(true);	// Taking the conjunction of each row separately simplifies DFAs because they all start the same
+		for (auto v : vs) if (u != v) {
+			edge_t e(u, v);
+			if (es.count(e)) {
+				row_dfa = row_dfa && half_edge_dfa(e);
+			} else {
+				row_dfa = row_dfa && no_half_edge_dfa(e);
+			}
+		}
+		result = result && row_dfa;
+	}
+	return result;
 }
 
 set<edge_t> random_edge_set(set<vertex_t> vs, double density = 0.5) {
 	vector<edge_t> vs_squared;
 	for (auto u : vs) for (auto v : vs) if (u < v) vs_squared.push_back(make_pair(u, v));
+	// srand(time(0));
 	random_shuffle(vs_squared.begin(), vs_squared.end());
 	auto it = vs_squared.begin();
 	int num_edges = round(vs_squared.size() * density);
@@ -286,7 +302,7 @@ void run() {
 	// 	{ 'D', 'E' },
 	// };
 
-	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
+	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K' };
 	// set<edge_t> es = random_edge_set(vs);
 
 	DFA dfa = graph_to_dfa(vs, es);
