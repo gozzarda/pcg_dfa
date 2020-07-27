@@ -214,7 +214,7 @@ struct DFA {
 			}
 		}
 
-		cerr << alphabet.size() << ", " << transitions.size() << endl;
+		// cerr << alphabet.size() << ", " << transitions.size() << endl;
 
 		return DFA(alphabet, transitions, accepting);
 	}
@@ -266,31 +266,98 @@ DFA graph_to_dfa(set<vertex_t> vs, set<edge_t> es) {
 	return result;
 }
 
-set<edge_t> random_edge_set(set<vertex_t> vs, double density = 0.5) {
-	vector<edge_t> vs_squared;
-	for (auto u : vs) for (auto v : vs) if (u < v) vs_squared.push_back(make_pair(u, v));
-	// srand(time(0));
-	random_shuffle(vs_squared.begin(), vs_squared.end());
-	auto it = vs_squared.begin();
-	int num_edges = round(vs_squared.size() * density);
+set<edge_t> random_edge_set(set<vertex_t> vs, size_t num_edges, size_t seed = 0) {
+	vector<edge_t> all_edges;
+	for (auto u : vs) for (auto v : vs) if (u < v) all_edges.push_back(edge_t(u, v));
+	default_random_engine rng(seed);
+	shuffle(all_edges.begin(), all_edges.end(), rng);
+	auto it = all_edges.begin();
+	num_edges = min(num_edges, all_edges.size());
 	set<edge_t> result;
 	for (int i = 0; i < num_edges; ++i) result.insert(*it++);
 	return result;
 }
 
+pair<set<vertex_t>, set<edge_t>> random_graph(size_t num_verts, size_t num_edges, size_t seed = 0) {
+	set<vertex_t> vs;
+	for (size_t v = 0; v < num_verts; ++v) vs.insert('A' + v);
+	set<edge_t> es = random_edge_set(vs, num_edges, seed);
+	return {vs, es};
+}
+
+void cerr_graph(set<vertex_t> vs, set<edge_t> es) {
+	cerr << ' ';
+	for (auto v : vs) cerr << ' ' << v;
+	cerr << endl;
+	for (auto u : vs) {
+		cerr << u;
+		for (auto v : vs) {
+			edge_t e(u, v), r(v, u);
+			cerr << ' ' << (es.count(e) || es.count(r));
+		}
+		cerr << endl;
+	}
+}
+
+// Should probably replace with just generating a connected graph in the first place, but this is easier
+bool is_connected_graph(set<vertex_t> vs, set<edge_t> es) {
+	set<vertex_t> seen;
+	seen.insert(*vs.begin());
+	for (int i = 0; i < vs.size() && seen.size() < vs.size(); ++i) {
+		for (edge_t e : es) {
+			if (seen.count(e.first)) seen.insert(e.second);
+			if (seen.count(e.second)) seen.insert(e.first);
+		}
+	}
+	return seen.size() == vs.size();
+}
+
+void timestats() {
+	default_random_engine rng;
+	uniform_int_distribution<size_t> vdist(5, 7);
+	const string sep = "\t";
+	cout << "V" << sep << "E" << sep << "seed (hex)" << sep << "states" << sep << "runtime (ms)" << endl;
+	while (true) {
+		size_t num_verts = vdist(rng);
+		uniform_int_distribution<size_t> edist(num_verts - 1, num_verts * (num_verts - 1) / 2);
+		size_t num_edges = edist(rng);
+		set<vertex_t> vs;
+		set<edge_t> es;
+		size_t seed = rng();
+		tie(vs, es) = random_graph(num_verts, num_edges, seed);
+		if (!is_connected_graph(vs, es)) continue;
+		cerr << num_verts << sep << num_edges << sep << hex << seed << dec << endl;
+		cerr_graph(vs, es);
+		auto init_time = chrono::high_resolution_clock::now();
+		DFA dfa = graph_to_dfa(vs, es);
+		auto halt_time = chrono::high_resolution_clock::now();
+		auto runtime = chrono::duration_cast<chrono::milliseconds>(halt_time - init_time);
+		cerr << "num states = " << dfa.transitions.size() << endl;
+		auto p = dfa.find_solution();
+		if (p.first) {
+			cerr << "Found solution: ";
+			for (event_t e : p.second) cerr << e;
+			cerr << endl;
+		} else {
+			cerr << "No solution found" << endl;
+		}
+		cout << num_verts << sep << num_edges << sep << hex << seed << dec << sep << dfa.transitions.size() << sep << runtime.count() << endl;
+	}
+}
+
 void run() {
-	set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
-	set<edge_t> es = {
-		{ 'A', 'B' },
-		{ 'A', 'C' },
-		{ 'A', 'D' },
-		{ 'B', 'C' },
-		{ 'B', 'E' },
-		{ 'C', 'F' },
-		{ 'D', 'E' },
-		{ 'D', 'F' },
-		{ 'E', 'F' },
-	};
+	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
+	// set<edge_t> es = {
+	// 	{ 'A', 'B' },
+	// 	{ 'A', 'C' },
+	// 	{ 'A', 'D' },
+	// 	{ 'B', 'C' },
+	// 	{ 'B', 'E' },
+	// 	{ 'C', 'F' },
+	// 	{ 'D', 'E' },
+	// 	{ 'D', 'F' },
+	// 	{ 'E', 'F' },
+	// };
 
 	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E' };
 	// set<edge_t> es = {
@@ -302,8 +369,10 @@ void run() {
 	// 	{ 'D', 'E' },
 	// };
 
-	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K' };
-	// set<edge_t> es = random_edge_set(vs);
+	set<vertex_t> vs;
+	set<edge_t> es;
+	tie(vs, es) = random_graph(10, 28, 0xbc5816b);
+	cerr_graph(vs, es);
 
 	DFA dfa = graph_to_dfa(vs, es);
 
@@ -321,5 +390,6 @@ void run() {
 }
 
 int main() {
-	run();
+	// run();
+	timestats();
 }
