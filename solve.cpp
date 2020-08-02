@@ -32,6 +32,121 @@ struct hash<vector<T>> {
 	}
 };
 
+struct Backtracker {
+	vector<vertex_t> verts;
+	vector<vecbool> adjmat;
+	vector<vector<uint8_t>> state;	// state[i][j] represents how many more steps down the ijijijij... alternating pattern are required before the edge (i, j) exists (max 4, min 0), 0 represents N/A
+	vector<uint32_t> rowstates;	// An integer representation of each row from state to make hashing easier (treat row as base 5 number)
+	uint8_t remaining_edges;
+	// uint8_t prefix_len;
+	vector<size_t> seq;
+	unordered_set<vector<uint32_t>> visited;
+
+	Backtracker(set<vertex_t> vs, set<edge_t> es) {
+		for (auto e : es) es.emplace(e.second, e.first);	// Split edges into half-edges
+
+		// Build adjmat
+		verts = vector<vertex_t>(vs.begin(), vs.end());
+		adjmat = vector<vecbool>(verts.size(), vecbool(verts.size()));
+		for (size_t u = 0; u < verts.size(); ++u) {
+			for (size_t v = 0; v < verts.size(); ++v) if (u != v) {
+				adjmat[u][v] = es.count(edge_t(verts[u], verts[v]));
+			}
+		}
+
+		// Initialize state
+		state = vector<vector<uint8_t>>(verts.size(), vector<uint8_t>(verts.size(), 4));
+		for (size_t i = 0; i < verts.size(); ++i) state[i][i] = 0;
+		rowstates = vector<uint32_t>(verts.size());
+		for (size_t r = 0; r < verts.size(); ++r) {
+			uint32_t rowstate = 0;
+			for (size_t c = 0; c < verts.size(); ++c) {
+				rowstate *= 5;
+				rowstate += state[r][c];
+			}
+			rowstates[r] = rowstate;
+		}
+		remaining_edges = es.size() / 2;
+		// prefix_len = 0;
+	}
+
+	vector<vertex_t> get_solution() {
+		vector<vertex_t> solution(seq.size());
+		transform(seq.begin(), seq.end(), solution.begin(), [&](auto i) { return verts.at(i); });
+		return solution;
+	}
+
+	pair<bool, vector<event_t>> find_solution() {
+		return { search(), get_solution() };
+	}
+
+	bool search() {
+		// if (seq.size() <= 6) {
+		// 	for (auto i : seq) cerr << verts[i];
+		// 	cerr << '\t' << visited.size() << endl;
+		// }
+		// assert(remaining_edges >= 0);
+		if (remaining_edges == 0) return true;
+		if (seq.size() > verts.size() * verts.size()) return false;
+		if (visited.count(rowstates)) return false;
+		visited.insert(rowstates);
+
+		// size_t min_opt = prefix_len < seq.size() ? seq[prefix_len] : 0;
+		// for (size_t opt = min_opt; opt < verts.size(); ++opt) {
+		for (size_t opt = 0; opt < verts.size(); ++opt) {
+			if (!seq.empty() && seq.back() == opt) continue;	// No point in ever repeating a value
+
+			auto row_save = state[opt];
+			auto col_save = row_save;
+			for (size_t r = 0; r < verts.size(); ++r) col_save[r] = state[r][opt];
+			auto rowstates_save = rowstates;
+			auto remaining_edges_save = remaining_edges;
+			// auto prefix_len_save = prefix_len;
+
+			// prefix_len = (prefix_len < seq.size() && opt == seq[prefix_len]) ? prefix_len + 1 : 0;
+
+			seq.push_back(opt);
+
+			uint32_t pow = 1;
+			for (size_t i = 0; i < opt; ++i) pow *= 5;
+
+			// Transpose row to col and reduce by 1 to represent sequence progression
+			bool good = true;
+			for (size_t i = 0; i < verts.size(); ++i) if (i != opt) {
+				auto row_prev = state[opt][i];
+				auto col_prev = state[i][opt];
+				state[opt][i] = 0;
+				if (row_prev > 0) state[i][opt] = row_prev - 1;
+				auto col_post = state[i][opt];
+
+				if (row_prev > 0 && col_post == 0) {	// The edge (i, opt) now exists
+					if (adjmat[i][opt]) {
+						--remaining_edges;
+					} else {
+						good = false;
+						break;
+					}
+				}
+
+				rowstates[i] -= col_prev * pow;
+				rowstates[i] += col_post * pow;
+			}
+			rowstates[opt] = 0;
+
+			if (good && search()) return true;
+
+			seq.pop_back();
+			state[opt] = row_save;
+			for (size_t r = 0; r < verts.size(); ++r) state[r][opt] = col_save[r];
+			rowstates = rowstates_save;
+			remaining_edges = remaining_edges_save;
+			// prefix_len = prefix_len_save;
+		}
+
+		return false;
+	}
+};
+
 // Explicit transition table representation of DFA
 // Assumes pseudocyclic
 // Assumes states are toposorted with initial state at end
@@ -279,18 +394,18 @@ set<edge_t> random_edge_set(set<vertex_t> vs, double density = 0.5) {
 }
 
 void run() {
-	set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
-	set<edge_t> es = {
-		{ 'A', 'B' },
-		{ 'A', 'C' },
-		{ 'A', 'D' },
-		{ 'B', 'C' },
-		{ 'B', 'E' },
-		{ 'C', 'F' },
-		{ 'D', 'E' },
-		{ 'D', 'F' },
-		{ 'E', 'F' },
-	};
+	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
+	// set<edge_t> es = {
+	// 	{ 'A', 'B' },
+	// 	{ 'A', 'C' },
+	// 	{ 'A', 'D' },
+	// 	{ 'B', 'C' },
+	// 	{ 'B', 'E' },
+	// 	{ 'C', 'F' },
+	// 	{ 'D', 'E' },
+	// 	{ 'D', 'F' },
+	// 	{ 'E', 'F' },
+	// };
 
 	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E' };
 	// set<edge_t> es = {
@@ -302,15 +417,17 @@ void run() {
 	// 	{ 'D', 'E' },
 	// };
 
-	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K' };
-	// set<edge_t> es = random_edge_set(vs);
+	set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H' };
+	set<edge_t> es = random_edge_set(vs);
 
-	DFA dfa = graph_to_dfa(vs, es);
+	// DFA dfa = graph_to_dfa(vs, es);
+	// auto p = dfa.find_solution();
+	// cout << "num states = " << dfa.transitions.size() << endl;
+	// cout << "alphabet size = " << dfa.alphabet.size() << endl;
 
-	cout << "num states = " << dfa.transitions.size() << endl;
-	cout << "alphabet size = " << dfa.alphabet.size() << endl;
+	Backtracker bt(vs, es);
+	auto p = bt.find_solution();
 
-	auto p = dfa.find_solution();
 	if (p.first) {
 		cout << "Found solution: ";
 		for (event_t e : p.second) cout << e;
