@@ -366,6 +366,18 @@ void run_rand(size_t seed, size_t v, size_t e) {
     cerr << states << delim;
     cerr << duration << endl;
 
+    size_t deadends = 0;
+    for (size_t r = 0; r < dfa.transitions.size(); ++r) {
+        auto& row = dfa.transitions[r];
+        bool is_deadend = true;
+        for (auto s : row) {
+            is_deadend = is_deadend && (s == SELF_LOOP);
+        }
+        if (is_deadend) cerr << (dfa.accepting[r] ? "Accepting" : "Rejecting") << endl;
+        deadends += is_deadend ? 1 : 0;
+    }
+    cerr << "deadends = " << deadends << endl;
+
     cout << hex << setfill('0') << setw(16) << seed << setw(0) << dec << delim;
     cout << v << delim << e << delim;
     cout << states << delim;
@@ -413,7 +425,7 @@ void run() {
 	// 	{ 'D', 'E' },
 	// };
 
-	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'K' };
+	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L' };
 	// set<edge_t> es = random_edge_set(vs);
 
 	DFA dfa = graph_to_dfa(vs, es);
