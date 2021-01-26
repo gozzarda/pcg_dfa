@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <map>
 #include <set>
 #include <stack>
 #include <vector>
@@ -300,6 +301,59 @@ DFA graph_to_dfa(set<vertex_t> vs, set<edge_t> es) {
 	return result;
 }
 
+// Test whether sub is a subsequence of set
+bool is_subsequence(const vector<vertex_t>& sub, const vector<vertex_t>& seq) {
+	auto sub_it = sub.begin();
+	for (auto seq_it = seq.begin(); sub_it != sub.end() && seq_it != seq.end(); ++seq_it) {
+		if (*sub_it == *seq_it) ++sub_it;
+	}
+	return sub_it == sub.end();
+}
+
+// Test whether seq is an alternating sequence representation of (vs, es)
+bool is_alternating_sequence(const set<vertex_t>& vs, const set<edge_t>& es, const vector<vertex_t>& seq) {
+	for (auto u : vs) {
+		for (auto v : vs) if (u != v) {
+			if (es.count({u, v}) || es.count({v, u})) {
+				if (!is_subsequence({u, v, u}, seq)) return false;
+			} else {
+				if (is_subsequence({u, v, u, v}, seq)) return false;
+			}
+		}
+	}
+	return true;
+}
+
+// Test whether (vs, es) is a polygon-circle graph by enumerating alternating sequences
+bool pcg_recognition_naive(const set<vertex_t>& vs, const set<edge_t>& es) {
+	// Normalize edge set so edges point from lower to higher vertex
+	set<edge_t> es_norm;
+	for (auto [u, v] : es) es_norm.emplace(min(u, v), max(u, v));
+
+	// Compute degree of each vertex
+	map<vertex_t, size_t> degree;
+	for (auto [u, v] : es_norm) {
+		++degree[u];
+		++degree[v];
+	}
+
+	// Construct assending sequence of vertices duplicated by max(degree, 2)
+	vector<vertex_t> seq;
+	for (auto [v, d] : degree) {
+		d = max(d, (size_t) 2);
+		for (size_t i = 0; i < d; ++i) {
+			seq.push_back(v);
+		}
+	}
+
+	// Enumerate and test all sequences
+	do {
+		if (is_alternating_sequence(vs, es, seq)) return true;
+	} while (next_permutation(seq.begin(), seq.end()));
+
+	return false;
+}
+
 // Construct a random set of edges with given density for testing
 set<edge_t> random_edge_set(set<vertex_t> vs, double density = 0.5) {
 	vector<edge_t> vs_squared;
@@ -353,6 +407,8 @@ void run() {
 	} else {
 		cout << "No solution found" << endl;
 	}
+
+	// assert(p.first == pcg_recognition_naive(vs, es));
 }
 
 int main() {
