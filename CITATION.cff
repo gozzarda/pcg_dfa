@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Gozzard"
+  given-names: "Andrew"
+title: "pcg_dfa"
+doi: 10.5281/zenodo.5577075
+url: "https://github.com/gozzarda/pcg_dfa"
