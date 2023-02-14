@@ -367,6 +367,100 @@ set<edge_t> random_edge_set(set<vertex_t> vs, double density = 0.5) {
 	return result;
 }
 
+// Generate random connected graph given seed, number of vertices, and number of edges
+// Number of edges must be at least v-1, in which case graph will be a tree
+pair<set<vertex_t>, set<edge_t>> random_connected_graph(size_t seed, size_t v, size_t e) {
+    const size_t max_e = v*(v-1)/2;
+    assert(v-1 <= e && e <= max_e);
+
+    default_random_engine gen(seed);
+    
+    vector<vertex_t> vv;
+    set<edge_t> es;
+    for (char c = 0; c < v; ++c) {
+        vertex_t v = 'A' + c;
+        if (!vv.empty()) {
+            uniform_int_distribution<size_t> pdist(0, vv.size()-1);
+            vertex_t p = vv[pdist(gen)];
+            es.insert(make_pair(p, v));
+        }
+        vv.push_back(v);
+    }
+
+    set<vertex_t> vs(vv.begin(), vv.end());
+
+    vector<edge_t> vs_squared;
+    for (auto u : vs) for (auto v : vs) if (u < v && !es.count(make_pair(u, v))) vs_squared.push_back(make_pair(u, v));
+    shuffle(vs_squared.begin(), vs_squared.end(), gen);
+
+    assert(es.size() == v-1);
+    assert(es.size() + vs_squared.size() == max_e);
+    auto it = vs_squared.begin();
+    while (es.size() < e) es.insert(*it++);
+
+    assert(vs.size() == v);
+    assert(es.size() == e);
+
+    return make_pair(vs, es);
+}
+
+const char delim = '\t';
+void run_rand(size_t seed, size_t v, size_t e) {
+    set<vertex_t> vs;
+    set<edge_t> es;
+    tie(vs, es) = random_connected_graph(seed, v, e);
+    
+    cerr << hex << setfill('0') << setw(16) << seed << setw(0) << dec << delim;
+    cerr << v << delim << e << delim;
+
+    auto start_time = chrono::high_resolution_clock::now();
+
+    DFA dfa = graph_to_dfa(vs, es);
+
+    auto final_time = chrono::high_resolution_clock::now();
+
+    size_t states = dfa.transitions.size();
+
+    auto duration = chrono::duration_cast<chrono::milliseconds>(final_time - start_time).count();
+    
+    cerr << states << delim;
+    cerr << duration << endl;
+
+    size_t deadends = 0;
+    for (size_t r = 0; r < dfa.transitions.size(); ++r) {
+        auto& row = dfa.transitions[r];
+        bool is_deadend = true;
+        for (auto s : row) {
+            is_deadend = is_deadend && (s == SELF_LOOP);
+        }
+        if (is_deadend) cerr << (dfa.accepting[r] ? "Accepting" : "Rejecting") << endl;
+        deadends += is_deadend ? 1 : 0;
+    }
+    cerr << "deadends = " << deadends << endl;
+
+    cout << hex << setfill('0') << setw(16) << seed << setw(0) << dec << delim;
+    cout << v << delim << e << delim;
+    cout << states << delim;
+    cout << duration << endl;
+}
+
+void run_rands(size_t seed, size_t max_v) {
+    cout << "seed" << delim;
+    cout << "V" << delim << "E" << delim;
+    cout << "states" << delim;
+    cout << "duration" << endl;
+
+    default_random_engine gen(seed);
+    uniform_int_distribution<size_t> sdist;
+    uniform_int_distribution<size_t> vdist(6, max_v);
+
+    while (true) {
+        size_t v = vdist(gen);
+        uniform_int_distribution<size_t> edist(v-1, v*(v-1)/2-1);   // Ignore wholly connected
+        run_rand(sdist(gen), v, edist(gen));
+    }
+}
+
 void run() {
 	set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F' };
 	set<edge_t> es = {
@@ -391,7 +485,7 @@ void run() {
 	// 	{ 'D', 'E' },
 	// };
 
-	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J' };
+	// set<vertex_t> vs = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L' };
 	// set<edge_t> es = random_edge_set(vs);
 
 	DFA dfa = graph_to_dfa(vs, es);
@@ -411,6 +505,23 @@ void run() {
 	// assert(p.first == pcg_recognition_naive(vs, es));
 }
 
-int main() {
-	run();
+
+int main(int argc, char *argv[]) {
+    if (argc == 1) {
+        run();
+    } else if (argc == 3) {
+        size_t seed, max_v;
+        stringstream ss;
+        ss << argv[1] << endl << argv[2] << endl;
+        ss >> hex >> seed >> dec >> max_v;
+        run_rands(seed, max_v);
+    } else if (argc == 4) {
+        size_t seed, v, e;
+        stringstream ss;
+        ss << argv[1] << endl << argv[2] << endl << argv[3] << endl;
+        ss >> hex >> seed >> dec >> v >> e;
+        run_rand(seed, v, e);
+    } else {
+        cerr << "bad args" << endl;
+    }
 }
